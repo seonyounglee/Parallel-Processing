@@ -50,6 +50,8 @@ struct object
 #define TYPE_PLANE 2
 
 #define THREADCOUNT 16
+#define TILE_width 20
+#define TILE_height 20
 
 struct object *objects;
 struct object *device_objects;
@@ -379,7 +381,7 @@ __global__ void render_pixel( int row, struct rgbcolor *imagedata, struct object
 		campos.y = 0;
 		campos.z = 0;
 
-		//ray direction calculation with pixel information.
+		//*************************ray direction calculation with pixel information. : CPU 로 꺼내기 
 		raydir.x = ( (float)px / (float)device_width ) - 0.5f + device_random(threadIdx.x)/(float)device_width;
 		raydir.y = ( ( (float)py / (float)device_height ) - 0.5f ) * ( (float)device_height/(float)device_width) + device_random(threadIdx.x)/(float)device_height;
 		raydir.z = 1;
@@ -550,6 +552,7 @@ __global__ void render_pixel( int row, struct rgbcolor *imagedata, struct object
 void render_image( int width, int height, int samples )
 {
 	int row, counter;
+	int tile_x, tile_y;
 	int blockcount;
 	int starttime;
 	cudaError_t error;
@@ -565,7 +568,7 @@ void render_image( int width, int height, int samples )
 	{
 		printf( "Error: %s\n", cudaGetErrorString( cudaGetLastError() ) );
 	}
-	if( cudaMalloc( (void **)&device_randseeds, sizeof( unsigned int ) * width ) != cudaSuccess )
+	if( cudaMalloc( (void **)&device_randseeds, sizeof( unsigned int ) * TILE_width *TILE_height*samples) != cudaSuccess )
 	{
 		printf( "Error: %s\n", cudaGetErrorString( cudaGetLastError() ) );
 	}
@@ -611,28 +614,31 @@ void render_image( int width, int height, int samples )
 	starttime = time( NULL );
 
 	// *************************row 처리 :  row 단위 말고 tile  : tile is rather than rows
-	for( row=0; row<height; row++ )
+	// first priority : ray 애 대한 1 차원 배열 만들기 : tile 에 있는 1 차원 배열을 cpu 로 보내서 처리
+	for( tile_x=0; tile_x<width/TILE_width; tile_x++ )
 	{
-		printf( "Rendering row %i of %i\r", row+1, height ); fflush( stdout );
+		for( tile_y=0; tile_y<height/TILE_height; tile_y++ ){
+			printf( "Rendering tile %i of %i\r", tile+1, height/TILE_heighs ); fflush( stdout );
 
-		for( counter=0; counter<width; counter++ )
-		{
-			randseeds[counter] = rand();
-		}
+			for( counter=0; counter<TILE_width*TILE_height*numsamples; counter++ )
+			{
+				randseeds[counter] = rand();
+			}
 
-		if( cudaMemcpy( device_randseeds, randseeds, sizeof( unsigned int ) * width, cudaMemcpyHostToDevice ) != cudaSuccess )
-		{
-			printf( "Error: %s\n", cudaGetErrorString( cudaGetLastError() ) );
-		}
-		
-		// process one ray at a time -> throughput 낮음
-		render_pixel <<< blockcount, THREADCOUNT >>> ( row, device_imagedata, device_objects, device_randseeds, device_envmap );
+			if( cudaMemcpy( device_randseeds, randseeds, sizeof( unsigned int ) * TILE_width * TILE_height * numsamples, cudaMemcpyHostToDevice ) != cudaSuccess )
+			{
+				printf( "Error: %s\n", cudaGetErrorString( cudaGetLastError() ) );
+			}
+			
+			// ************************* process one ray at a time -> throughput 낮음 : queue 로 만들어
+			render_pixel <<< blockcount, THREADCOUNT >>> ( tile, device_imagedata, device_objects, device_randseeds, device_envmap );
 
-		error = cudaGetLastError();
+			error = cudaGetLastError();
 
-		if( error != cudaSuccess )
-		{
-			printf( "Error: %s\n", cudaGetErrorString( error ) );
+			if( error != cudaSuccess )
+			{
+				printf( "Error: %s\n", cudaGetErrorString( error ) );
+			}
 		}
 	}
 
