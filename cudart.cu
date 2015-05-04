@@ -617,8 +617,11 @@ void render_image( int width, int height, int samples )
 	// first priority : ray 애 대한 1 차원 배열 만들기 : tile 에 있는 1 차원 배열을 cpu 로 보내서 처리
 	for( tile_x=0; tile_x<width/TILE_width; tile_x++ )
 	{
-		for( tile_y=0; tile_y<height/TILE_height; tile_y++ ){
-			printf( "Rendering tile %i of %i\r", tile+1, height/TILE_heighs ); fflush( stdout );
+		for( tile_y=0; tile_y<height/TILE_height; tile_y++ )
+    {
+      int tile_id = tile_x * (width / TILE_width) + tile_y;
+
+			printf( "Rendering tile %i of %i\r", tile_id, TILE_width/TILE_height ); fflush( stdout );
 
 			for( counter=0; counter<TILE_width*TILE_height*numsamples; counter++ )
 			{
@@ -631,7 +634,7 @@ void render_image( int width, int height, int samples )
 			}
 			
 			// ************************* process one ray at a time -> throughput 낮음 : queue 로 만들어
-			render_pixel <<< blockcount, THREADCOUNT >>> ( tile, device_imagedata, device_objects, device_randseeds, device_envmap );
+			render_pixel <<< blockcount, THREADCOUNT >>> ( tile_id, device_imagedata, device_objects, device_randseeds, device_envmap );
 
 			error = cudaGetLastError();
 
