@@ -630,11 +630,7 @@ void render_image( int width, int height, int samples )
     {
       int tile_id = tile_x * (width / TILE_width) + tile_y;
 
-<<<<<<< HEAD
 			printf( "Rendering tile %i of %i\r", tile_id, (width/TILE_width)*(height/TILE_height) ); fflush( stdout );
-=======
-			printf( "Rendering tile %i of %i\r", tile_id, TILE_width/TILE_height ); fflush( stdout );
->>>>>>> 6a5cfc7816c088d15c72f92b0350fee18747f2b8
 
 			for( counter=0; counter<TILE_width*TILE_height*numsamples; counter++ )
 			{
@@ -661,12 +657,8 @@ void render_image( int width, int height, int samples )
 			}
 
 			// ************************* process one ray at a time -> throughput 낮음 : queue 로 만들어
-<<<<<<< HEAD
 			//render_pixel <<< blockcount, THREADCOUNT >>> ( tile_id, device_imagedata, device_objects, device_randseeds, device_envmap );
 			render_pixel <<< blockcount, THREADCOUNT >>> ( tile_id, device_imagedata, device_objects, device_raydir, device_randseeds, device_envmap );
-=======
-			render_pixel <<< blockcount, THREADCOUNT >>> ( tile_id, device_imagedata, device_objects, device_randseeds, device_envmap );
->>>>>>> 6a5cfc7816c088d15c72f92b0350fee18747f2b8
 
 			error = cudaGetLastError();
 
