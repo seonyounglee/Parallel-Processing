@@ -60,6 +60,8 @@ struct rgbcolor *imagedata;
 struct rgbcolor *device_imagedata;
 unsigned int *randseeds;
 unsigned int *device_randseeds;
+struct vector3d *raydir;
+struct vector3d *device_raydir;
 
 char envmap_filename[256] = "";
 struct rgbcolor *envmap;
@@ -338,10 +340,12 @@ int build_scene( char *scenefilename )
 
 // need to modify this function
 
-__global__ void render_pixel( int row, struct rgbcolor *imagedata, struct object *globalobjects, unsigned int *randseeds, struct rgbcolor *envmap )
+//__global__ void render_pixel( int row, struct rgbcolor *imagedata, struct object *globalobjects, unsigned int *randseeds, struct rgbcolor *envmap )
+__global__ void render_pixel( int row, struct rgbcolor *imagedata, struct object *globalobjects, struct vector3d *raydir, unsigned int *randseeds, struct rgbcolor *envmap )
 {
 	volatile int px, py, tx, ty, raycounter;
-	struct vector3d raydir, campos;
+	//struct vector3d raydir, campos;
+	struct vector3d campos;
 	struct rgbcolor pcolor, contrib;
 
 	__shared__ struct object localobjects[64];
@@ -359,7 +363,7 @@ __global__ void render_pixel( int row, struct rgbcolor *imagedata, struct object
 		}
 	}	
 
-	randseed[threadIdx.x] =  randseeds[blockIdx.x * blockDim.x + threadIdx.x];
+	//randseed[threadIdx.x] =  randseeds[blockIdx.x * blockDim.x + threadIdx.x];
 
 	__syncthreads();
 
@@ -374,18 +378,19 @@ __global__ void render_pixel( int row, struct rgbcolor *imagedata, struct object
 	pcolor.b = 0;
 
 	// 같은 pixel 에 device_sample 숫자 만큼 쏨
-	for( raycounter = 0; raycounter<device_samples; raycounter++ )
-	{
+	//for( raycounter = 0; raycounter<device_samples; raycounter++ )
+	//{
 		// start point
 		campos.x = 0;
 		campos.y = 0;
 		campos.z = 0;
 
+		//int id = blockIdx.x * blockDim.x + threadIdx.x;
 		//*************************ray direction calculation with pixel information. : CPU 로 꺼내기 
-		raydir.x = ( (float)px / (float)device_width ) - 0.5f + device_random(threadIdx.x)/(float)device_width;
-		raydir.y = ( ( (float)py / (float)device_height ) - 0.5f ) * ( (float)device_height/(float)device_width) + device_random(threadIdx.x)/(float)device_height;
-		raydir.z = 1;
-		raydir = vec_normalize( raydir );
+		//raydir.x = ( (float)px / (float)device_width ) - 0.5f + device_random(threadIdx.x)/(float)device_width;
+		//raydir.y = ( ( (float)py / (float)device_height ) - 0.5f ) * ( (float)device_height/(float)device_width) + device_random(threadIdx.x)/(float)device_height;
+		//raydir.z = 1;
+		raydir[px] = vec_normalize( raydir[px] );
 
 		contrib.r = 1.0f;
 		contrib.g = 1.0f;
@@ -415,7 +420,7 @@ __global__ void render_pixel( int row, struct rgbcolor *imagedata, struct object
 					d.x = localobjects[counter].pos.x - campos.x;
 					d.y = localobjects[counter].pos.y - campos.y;
 					d.z = localobjects[counter].pos.z - campos.z;
-					v = vec_dot( raydir, d );
+					v = vec_dot( raydir[px], d );
 
 					if( v - localobjects[counter].rad > mindist )
 						continue;
@@ -429,9 +434,9 @@ __global__ void render_pixel( int row, struct rgbcolor *imagedata, struct object
 					if( ( t > mindist ) || ( t < 0 ) )
 						continue;
 
-					n.x = campos.x + t*raydir.x - localobjects[counter].pos.x;
-					n.y = campos.y + t*raydir.y - localobjects[counter].pos.y;
-					n.z = campos.z + t*raydir.z - localobjects[counter].pos.z;
+					n.x = campos.x + t*raydir[px].x - localobjects[counter].pos.x;
+					n.y = campos.y + t*raydir[px].y - localobjects[counter].pos.y;
+					n.z = campos.z + t*raydir[px].z - localobjects[counter].pos.z;
 					n = vec_normalize( n );
 
 					mindist = t;
@@ -440,7 +445,7 @@ __global__ void render_pixel( int row, struct rgbcolor *imagedata, struct object
 				
 				else if( localobjects[counter].type == TYPE_PLANE )
 				{
-					v = vec_dot( localobjects[counter].n, raydir );
+					v = vec_dot( localobjects[counter].n, raydir[px] );
 
 					if( v >= 0 )
 						continue;
@@ -463,20 +468,20 @@ __global__ void render_pixel( int row, struct rgbcolor *imagedata, struct object
 
 			if( obj != -1 )
 			{
-				x = campos.x + mindist*raydir.x;
-				y = campos.y + mindist*raydir.y;
-				z = campos.z + mindist*raydir.z;
+				x = campos.x + mindist*raydir[px].x;
+				y = campos.y + mindist*raydir[px].y;
+				z = campos.z + mindist*raydir[px].z;
 
-				ir.x = -raydir.x;
-				ir.y = -raydir.y;
-				ir.z = -raydir.z;
+				ir.x = -raydir[px].x;
+				ir.y = -raydir[px].y;
+				ir.z = -raydir[px].z;
 
 				t = 2 * vec_dot( ir, n );
 
-				raydir.x = t*n.x-ir.x;
-				raydir.y = t*n.y-ir.y;
-				raydir.z = t*n.z-ir.z;
-				raydir = vec_normalize( raydir );
+				raydir[px].x = t*n.x-ir.x;
+				raydir[px].y = t*n.y-ir.y;
+				raydir[px].z = t*n.z-ir.z;
+				raydir[px] = vec_normalize( raydir[px] );
 
 				do
 				{
@@ -488,14 +493,14 @@ __global__ void render_pixel( int row, struct rgbcolor *imagedata, struct object
 
 				v = (localobjects[obj].d*device_random(threadIdx.x))*localobjects[obj].g + localobjects[obj].d*(1.0f-localobjects[obj].g);
 
-				raydir.x = o.x*v+raydir.x*(1.0f-v);
-				raydir.y = o.y*v+raydir.y*(1.0f-v);
-				raydir.z = o.z*v+raydir.z*(1.0f-v);
-				raydir = vec_normalize( raydir );
+				raydir[px].x = o.x*v+raydir[px].x*(1.0f-v);
+				raydir[px].y = o.y*v+raydir[px].y*(1.0f-v);
+				raydir[px].z = o.z*v+raydir[px].z*(1.0f-v);
+				raydir[px] = vec_normalize( raydir[px] );
 
-				campos.x = x+0.001f*raydir.x;
-				campos.y = y+0.001f*raydir.y;
-				campos.z = z+0.001f*raydir.z;
+				campos.x = x+0.001f*raydir[px].x;
+				campos.y = y+0.001f*raydir[px].y;
+				campos.z = z+0.001f*raydir[px].z;
 
 				contrib.r *= localobjects[obj].c.r;
 				contrib.g *= localobjects[obj].c.g;
@@ -516,8 +521,8 @@ __global__ void render_pixel( int row, struct rgbcolor *imagedata, struct object
 				else // 있을 때
 				{
 					//배경 이미지의 xy point
-					tx = (int)( ( ( atan2( raydir.x, raydir.z ) / PI + 1.0f ) * 0.5f ) * device_envmap_width ) % device_envmap_width;
-					ty = ( atan2( raydir.y, sqrt( raydir.x*raydir.x + raydir.z*raydir.z ) ) / PI + 0.5f ) / ( 1.0f - device_envmap_offset ) * device_envmap_height;
+					tx = (int)( ( ( atan2( raydir[px].x, raydir[px].z ) / PI + 1.0f ) * 0.5f ) * device_envmap_width ) % device_envmap_width;
+					ty = ( atan2( raydir[px].y, sqrt( raydir[px].x*raydir[px].x + raydir[px].z*raydir[px].z ) ) / PI + 0.5f ) / ( 1.0f - device_envmap_offset ) * device_envmap_height;
 					
 					if( ty >= device_envmap_height )
 					{
@@ -535,7 +540,7 @@ __global__ void render_pixel( int row, struct rgbcolor *imagedata, struct object
 				contrib.b = 0.0f;
 			}
 		}
-	}
+	//}
 
 	pcolor.r = pcolor.r / (float)device_samples;
 	pcolor.g = pcolor.g / (float)device_samples;
@@ -569,6 +574,10 @@ void render_image( int width, int height, int samples )
 		printf( "Error: %s\n", cudaGetErrorString( cudaGetLastError() ) );
 	}
 	if( cudaMalloc( (void **)&device_randseeds, sizeof( unsigned int ) * TILE_width *TILE_height*samples) != cudaSuccess )
+	{
+		printf( "Error: %s\n", cudaGetErrorString( cudaGetLastError() ) );
+	}
+	if( cudaMalloc( (void **)&device_raydir, sizeof( struct vector3d ) * TILE_width *TILE_height*samples) != cudaSuccess )
 	{
 		printf( "Error: %s\n", cudaGetErrorString( cudaGetLastError() ) );
 	}
@@ -617,8 +626,11 @@ void render_image( int width, int height, int samples )
 	// first priority : ray 애 대한 1 차원 배열 만들기 : tile 에 있는 1 차원 배열을 cpu 로 보내서 처리
 	for( tile_x=0; tile_x<width/TILE_width; tile_x++ )
 	{
-		for( tile_y=0; tile_y<height/TILE_height; tile_y++ ){
-			printf( "Rendering tile %i of %i\r", tile+1, height/TILE_heighs ); fflush( stdout );
+		for( tile_y=0; tile_y<height/TILE_height; tile_y++ )
+    {
+      int tile_id = tile_x * (width / TILE_width) + tile_y;
+
+			printf( "Rendering tile %i of %i\r", tile_id, (width/TILE_width)*(height/TILE_height) ); fflush( stdout );
 
 			for( counter=0; counter<TILE_width*TILE_height*numsamples; counter++ )
 			{
@@ -629,9 +641,24 @@ void render_image( int width, int height, int samples )
 			{
 				printf( "Error: %s\n", cudaGetErrorString( cudaGetLastError() ) );
 			}
-			
+
+			for( int raycounter = 0; raycounter<TILE_width*TILE_height*numsamples; raycounter++ )
+			{
+				//*************************ray direction calculation with pixel information. : CPU 로 꺼내기 
+				raydir[raycounter].x = ( (float)raycounter / (float)width ) - 0.5f + randseeds[raycounter]/(float)width;
+				raydir[raycounter].y = ( ( (float)raycounter / (float)height ) - 0.5f ) * ( (float)height/(float)width) + randseeds[raycounter]/(float)height;
+				raydir[raycounter].z = 1;
+				//raydir = vec_normalize( raydir );
+			}
+
+			if (cudaMemcpy( device_raydir, raydir, sizeof(struct vector3d)*TILE_width*TILE_height*numsamples, cudaMemcpyHostToDevice) != cudaSuccess)
+			{
+				printf( "Error: %s\n", cudaGetErrorString( cudaGetLastError() ) );
+			}
+
 			// ************************* process one ray at a time -> throughput 낮음 : queue 로 만들어
-			render_pixel <<< blockcount, THREADCOUNT >>> ( tile, device_imagedata, device_objects, device_randseeds, device_envmap );
+			//render_pixel <<< blockcount, THREADCOUNT >>> ( tile_id, device_imagedata, device_objects, device_randseeds, device_envmap );
+			render_pixel <<< blockcount, THREADCOUNT >>> ( tile_id, device_imagedata, device_objects, device_raydir, device_randseeds, device_envmap );
 
 			error = cudaGetLastError();
 
@@ -686,10 +713,16 @@ int main( int argc, char *argv[] )
 		perror( "malloc" );
 		return 1;
 	}
-	randseeds = (unsigned int*) malloc( sizeof( unsigned int ) * width );
+	randseeds = (unsigned int*) malloc( sizeof( unsigned int ) * TILE_width * TILE_height * numsamples );
 	if( randseeds == NULL )
 	{
 		perror( "malloc" );
+		return 1;
+	}
+	raydir = (struct vector3d *)malloc(sizeof(struct vector3d) * TILE_width * TILE_height * numsamples);
+	if (raydir == NULL)
+	{
+		perror ("malloc raydir!");
 		return 1;
 	}
 
