@@ -49,7 +49,7 @@ struct object
 #define TYPE_SPHERE 1
 #define TYPE_PLANE 2
 
-#define THREADCOUNT 16
+#define THREADCOUNT 256
 #define TILE_width 10
 #define TILE_height 10
 
@@ -130,6 +130,17 @@ __device__ float device_random( int tid )
 	randseed[tid] = sNew;
 	float res = sNew * MODULUS_INV;
 	return res;
+}
+
+__device__ inline void device_atomicAdd(float* address, float value)
+{
+	float old = value;
+	float new_old;
+
+	do {
+		new_old = atomicExch(address, 0.0f);
+		new_old += old;
+	} while ((old = atomicExch(address, new_old)) != 0.0f);
 }
 
 int save_pfm( unsigned int width, unsigned int height, struct rgbcolor *imagedata, char filename[], int normalize )
@@ -343,7 +354,8 @@ int build_scene( char *scenefilename )
 //__global__ void render_pixel( int row, struct rgbcolor *imagedata, struct object *globalobjects, unsigned int *randseeds, struct rgbcolor *envmap )
 __global__ void render_pixel( int tile_id, struct rgbcolor *imagedata, struct object *globalobjects, struct vector3d *raydir, unsigned int *randseeds, struct rgbcolor *envmap )
 {
-	volatile int px, py, tx, ty, raycounter;
+	volatile int px, py, tx, ty;
+	volatile int pixel_x, pixel_y;
 	//struct vector3d raydir, campos;
 	struct vector3d campos;
 	struct rgbcolor pcolor, contrib;
@@ -368,7 +380,9 @@ __global__ void render_pixel( int tile_id, struct rgbcolor *imagedata, struct ob
 	__syncthreads();
 
 	px = blockIdx.x * blockDim.x + threadIdx.x;
-	//py = row;
+
+	pixel_x = (tile_id%(device_width/TILE_width)*TILE_width) + (px/device_samples)%TILE_width;
+	pixel_y = (tile_id/(device_width/TILE_width)*TILE_width) + (px/device_samples)/TILE_height;
 
 	//if( px >= device_width )
 	//	return;
@@ -405,7 +419,6 @@ __global__ void render_pixel( int tile_id, struct rgbcolor *imagedata, struct ob
 		// while 한번에 ray 하나 
 		// if color is black, stop tracing
 		// *************************
-		
 		while ( ( depth <= device_maxdepth ) && ( ( contrib.r * 255.0f > 1.0f ) || ( contrib.g * 255.0f > 1.0f ) || ( contrib.b * 255.0f > 1.0f ) ) )
 		{
 			mindist = 10000.0f;
@@ -544,9 +557,9 @@ __global__ void render_pixel( int tile_id, struct rgbcolor *imagedata, struct ob
 		}
 	//}
 
-	//pcolor.r = pcolor.r / (float)device_samples;
-	//pcolor.g = pcolor.g / (float)device_samples;
-	//pcolor.b = pcolor.b / (float)device_samples;
+	pcolor.r = pcolor.r / (float)device_samples;
+	pcolor.g = pcolor.g / (float)device_samples;
+	pcolor.b = pcolor.b / (float)device_samples;
 
 /*	imagedata[px+py*device_width].r = 1.0f - exp( -pcolor.r );
 	imagedata[px+py*device_width].g = 1.0f - exp( -pcolor.g );
@@ -555,9 +568,12 @@ __global__ void render_pixel( int tile_id, struct rgbcolor *imagedata, struct ob
 	//imagedata[px+py*device_width].g = pcolor.g;
 	//imagedata[px+py*device_width].b = pcolor.b;
 	
-	imagedata[px/device_samples].r += pcolor.r;
-	imagedata[px/device_samples].g += pcolor.g;
-	imagedata[px/device_samples].b += pcolor.b;
+	device_atomicAdd(&imagedata[pixel_x+pixel_y+device_width].r, pcolor.r);
+	device_atomicAdd(&imagedata[pixel_x+pixel_y*device_width].g, pcolor.g);
+	device_atomicAdd(&imagedata[pixel_x+pixel_y*device_width].b, pcolor.b);
+	//imagedata[pixel_x+pixel_y*device_width].r += pcolor.r;
+	//imagedata[pixel_x+pixel_y*device_width].g += pcolor.g;
+	//imagedata[pixel_x+pixel_y*device_width].b += pcolor.b;
 }
 
 void render_image( int width, int height, int samples )
@@ -569,7 +585,7 @@ void render_image( int width, int height, int samples )
 	cudaError_t error;
 
 	//blockcount = width/THREADCOUNT + ( width%THREADCOUNT == 0?0:1 );
-	blockcount = (TILE_width*TILE_height*samples)/THREADCOUNT;
+	blockcount = TILE_width*TILE_height;
 
 	puts( "Allocating memory on device" );
 	if( cudaMalloc( (void **)&device_objects, sizeof( struct object ) * objectcount ) != cudaSuccess )
@@ -637,7 +653,7 @@ void render_image( int width, int height, int samples )
     		{
 			int tile_id = tile_x * (width / TILE_width) + tile_y;
 
-			printf( "Rendering tile [%2i,%2i] %i of %i\r", tile_x, tile_y, tile_id, (width/TILE_width)*(height/TILE_height) ); fflush( stdout );
+			printf( "Rendering tile [%3i,%3i] %i of %i\r", tile_x, tile_y, tile_id, (width/TILE_width)*(height/TILE_height) ); fflush( stdout );
 
 			for( counter=0; counter<TILE_width*TILE_height*numsamples; counter++ )
 			{
