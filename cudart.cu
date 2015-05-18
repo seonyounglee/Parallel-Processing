@@ -688,24 +688,26 @@ void render_image(int width, int height, int samples, rgbcolor *imagedata)
 	//Step 0: Initialize device_primary_ray_directions
 	puts("Generating primary rays");
 	generate_primary_rays << < BLOCKCOUNT, THREADCOUNT >> >(device_randseeds, device_primary_ray_directions);
+    
+    int total_samples =  width * height * numsamples;
 
 	// *************************row 처리 :  row 단위 말고 tile  : tile is rather than rows
-	for (int offset = 0; offset < width * height * numsamples; offset += RAYTRACE_SAMPLES_PER_KERNEL_EXECUTION)
-	{
-		printf("Rendering sample %i ~ %i of %i\r", offset, offset + RAYTRACE_SAMPLES_PER_KERNEL_EXECUTION - 1, width * height * numsamples); fflush(stdout);
+	for (int offset = 0; offset < total_samples; offset += RAYTRACE_SAMPLES_PER_KERNEL_EXECUTION)
+    {
+            int count = min(RAYTRACE_SAMPLES_PER_KERNEL_EXECUTION, total_samples - offset);
+            printf("Rendering sample %i ~ %i of %i\r", offset, offset + count - 1, total_samples); fflush(stdout);
 
-		// process one ray at a time -> throughput 낮음
-		raytrace << < BLOCKCOUNT, THREADCOUNT >> > (offset, RAYTRACE_SAMPLES_PER_KERNEL_EXECUTION, device_objects, device_randseeds, device_envmap, device_primary_ray_directions);
+            raytrace << < BLOCKCOUNT, THREADCOUNT >> > (offset, count, device_objects, device_randseeds, device_envmap, device_primary_ray_directions);
 
-		error = cudaGetLastError();
+            error = cudaGetLastError();
 
-		if (error != cudaSuccess)
-		{
-			printf("Error: %s\n", cudaGetErrorString(error));
-		}
+            if (error != cudaSuccess)
+            {
+                    printf("Error: %s\n", cudaGetErrorString(error));
+            }
 
-		cudaThreadSynchronize();
-	}
+            cudaThreadSynchronize();
+    }
 
 	puts("Reconstructing");
 	reconstruct << <  BLOCKCOUNT, THREADCOUNT >> > (device_imagedata, device_primary_ray_directions);
